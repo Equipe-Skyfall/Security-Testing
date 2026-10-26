@@ -1,35 +1,22 @@
-"""Esquemas de entrada e saida.
-
-extra="forbid" faz a API recusar (HTTP 422) qualquer campo que nao esteja
-declarado aqui, o que impede mass assignment (ex.: enviar "papel").
-"""
-from pydantic import BaseModel, ConfigDict, Field
+"""Esquemas de entrada e saida."""
+from pydantic import BaseModel
 
 
-class Entrada(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class RegistroIn(BaseModel):
+    nome: str
+    email: str
+    senha: str
 
 
-class RegistroIn(Entrada):
-    nome: str = Field(min_length=2, max_length=100)
-    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=120)
-    senha: str = Field(min_length=8, max_length=72)
+class LoginIn(BaseModel):
+    email: str
+    senha: str
 
 
-class LoginIn(Entrada):
-    email: str = Field(max_length=120)
-    senha: str = Field(max_length=72)
-
-
-class UsuarioUpdate(Entrada):
-    nome: str | None = Field(default=None, min_length=2, max_length=100)
-    email: str | None = Field(default=None, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=120)
-
-
-class NotaIn(Entrada):
+class NotaIn(BaseModel):
     aluno_id: int
-    disciplina: str = Field(min_length=2, max_length=80)
-    valor: float = Field(ge=0, le=10)
+    disciplina: str
+    valor: float
 
 
 class UsuarioOut(BaseModel):
@@ -37,11 +24,6 @@ class UsuarioOut(BaseModel):
     nome: str
     email: str
     papel: str
-
-
-class AlunoOut(BaseModel):
-    id: int
-    nome: str
 
 
 class NotaOut(BaseModel):

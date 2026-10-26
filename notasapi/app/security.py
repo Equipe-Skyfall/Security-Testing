@@ -1,8 +1,10 @@
-"""Senhas, tokens JWT, controle de acesso e limite de tentativas de login."""
-import time
+"""Senhas, tokens JWT e controle de acesso.
+
+ATENCAO: versao VULNERAVEL de proposito (branch vulneravel). Nao use em producao.
+"""
+import hashlib
 from datetime import datetime, timedelta, timezone
 
-import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,31 +18,21 @@ bearer = HTTPBearer(auto_error=False)
 
 
 def gerar_hash_senha(senha: str) -> str:
-    # bcrypt gera um salt aleatorio por senha e e propositalmente lento.
-    return bcrypt.hashpw(senha.encode(), bcrypt.gensalt()).decode()
+    # FALHA: MD5 sem salt - senhas iguais geram o mesmo hash e sao quebradas em segundos.
+    return hashlib.md5(senha.encode()).hexdigest()
 
 
 def verificar_senha(senha: str, senha_hash: str) -> bool:
-    return bcrypt.checkpw(senha.encode(), senha_hash.encode())
+    return gerar_hash_senha(senha) == senha_hash
 
 
 def criar_token(usuario: Usuario) -> str:
-    agora = datetime.now(timezone.utc)
     payload = {
-        "sub": str(usuario.id),
+        "id": usuario.id,
         "papel": usuario.papel,
-        "iat": agora,
-        "exp": agora + timedelta(minutes=config.JWT_EXPIRACAO_MINUTOS),
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=config.JWT_EXPIRACAO_MINUTOS),
     }
     return jwt.encode(payload, config.JWT_SECRET, algorithm=config.JWT_ALGORITHM)
-
-
-def _nao_autenticado() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Token ausente ou invalido",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
 
 
 def usuario_atual(
@@ -48,59 +40,21 @@ def usuario_atual(
     db: Session = Depends(get_db),
 ) -> Usuario:
     if credenciais is None:
-        raise _nao_autenticado()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token ausente")
     try:
-        # Lista fixa de algoritmos (bloqueia "none") e verificacao de assinatura e expiracao.
+        # FALHA: a assinatura (e, com ela, a expiracao) nao e verificada.
+        # Qualquer token bem formado e aceito, inclusive com alg "none" ou segredo errado.
         payload = jwt.decode(
             credenciais.credentials,
             config.JWT_SECRET,
-            algorithms=[config.JWT_ALGORITHM],
-            options={"require": ["sub", "exp"]},
+            algorithms=["HS256", "none"],
+            options={"verify_signature": False},
         )
-        usuario = db.get(Usuario, int(payload["sub"]))
-    except (jwt.PyJWTError, ValueError):
-        raise _nao_autenticado()
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalido")
+    usuario = db.get(Usuario, payload.get("id"))
     if usuario is None:
-        raise _nao_autenticado()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario nao encontrado")
+    # FALHA: o papel e lido do token (controlado pelo cliente), nao do banco.
+    usuario.papel = payload.get("papel", usuario.papel)
     return usuario
-
-
-def exigir_papel(papel: str):
-    """Autorizacao por funcao: o papel vem do banco, nunca do corpo da requisicao."""
-
-    def verificar(usuario: Usuario = Depends(usuario_atual)) -> Usuario:
-        if usuario.papel != papel:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso negado")
-        return usuario
-
-    return verificar
-
-
-class LimitadorLogin:
-    """Bloqueia o login de um e-mail apos N senhas erradas dentro de uma janela de tempo."""
-
-    def __init__(self, max_tentativas: int, janela_segundos: int):
-        self.max_tentativas = max_tentativas
-        self.janela_segundos = janela_segundos
-        self._falhas: dict[str, list[float]] = {}
-
-    def _recentes(self, chave: str) -> list[float]:
-        limite = time.monotonic() - self.janela_segundos
-        falhas = [t for t in self._falhas.get(chave, []) if t > limite]
-        self._falhas[chave] = falhas
-        return falhas
-
-    def bloqueado(self, chave: str) -> bool:
-        return len(self._recentes(chave)) >= self.max_tentativas
-
-    def registrar_falha(self, chave: str) -> None:
-        self._recentes(chave).append(time.monotonic())
-
-    def limpar(self, chave: str | None = None) -> None:
-        if chave is None:
-            self._falhas.clear()
-        else:
-            self._falhas.pop(chave, None)
-
-
-limitador_login = LimitadorLogin(config.LOGIN_MAX_TENTATIVAS, config.LOGIN_JANELA_SEGUNDOS)
