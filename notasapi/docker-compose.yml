@@ -1,0 +1,10 @@
+# Ambiente de teste ISOLADO: a API so fica acessivel em 127.0.0.1 (a propria maquina).
+services:
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////tmp/notas.db
+      EXPOR_DOCS: "true"

@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="Segoe UI, Arial, sans-serif" font-size="14">
+  <title>Arquitetura da NotasAPI, superfície de ataque e onde cada técnica de teste atua</title>
+  <defs>
+    <marker id="seta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="640" fill="#ffffff"/>
+
+  <!-- Ambiente isolado -->
+  <rect x="20" y="20" width="960" height="370" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="8 6"/>
+  <text x="40" y="48" font-weight="700" fill="#334155">Ambiente de teste isolado (local, docker-compose ou runner do CI) — nunca produção</text>
+
+  <!-- Cliente -->
+  <rect x="45" y="150" width="175" height="90" rx="10" fill="#e0f2fe" stroke="#0284c7"/>
+  <text x="132" y="185" text-anchor="middle" font-weight="700">Cliente / atacante</text>
+  <text x="132" y="207" text-anchor="middle" fill="#334155">Swagger UI, curl,</text>
+  <text x="132" y="225" text-anchor="middle" fill="#334155">script de ataques</text>
+
+  <!-- API -->
+  <rect x="320" y="70" width="330" height="290" rx="10" fill="#ecfdf5" stroke="#059669"/>
+  <text x="485" y="98" text-anchor="middle" font-weight="700">NotasAPI (Python + FastAPI + PyJWT)</text>
+  <g font-family="Consolas, monospace" font-size="13">
+    <text x="338" y="132">POST  /auth/registro</text>
+    <text x="338" y="160">POST  /auth/login (emite JWT)</text>
+    <text x="338" y="188">GET   /notas/minhas</text>
+    <text x="338" y="216">GET   /notas/{id}</text>
+    <text x="338" y="244">POST  /notas (professor)</text>
+    <text x="338" y="272">GET   /alunos?nome=</text>
+    <text x="338" y="300">PATCH /usuarios/me</text>
+    <text x="338" y="328">Middlewares: CORS, cabeçalhos</text>
+  </g>
+  <g font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle">
+    <circle cx="612" cy="128" r="10" fill="#dc2626"/><text x="612" y="132">5</text>
+    <circle cx="590" cy="156" r="10" fill="#dc2626"/><text x="590" y="160">1</text>
+    <circle cx="612" cy="156" r="10" fill="#dc2626"/><text x="612" y="160">5</text>
+    <circle cx="612" cy="184" r="10" fill="#dc2626"/><text x="612" y="188">1</text>
+    <circle cx="612" cy="212" r="10" fill="#dc2626"/><text x="612" y="216">2</text>
+    <circle cx="612" cy="240" r="10" fill="#dc2626"/><text x="612" y="244">2</text>
+    <circle cx="612" cy="268" r="10" fill="#dc2626"/><text x="612" y="272">3</text>
+    <circle cx="612" cy="296" r="10" fill="#dc2626"/><text x="612" y="300">4</text>
+    <circle cx="612" cy="324" r="10" fill="#dc2626"/><text x="612" y="328">7</text>
+  </g>
+
+  <!-- Banco -->
+  <rect x="760" y="150" width="190" height="90" rx="10" fill="#fef3c7" stroke="#d97706"/>
+  <text x="855" y="185" text-anchor="middle" font-weight="700">Banco de dados</text>
+  <text x="855" y="207" text-anchor="middle" fill="#334155">SQLite + SQLAlchemy</text>
+  <text x="855" y="225" text-anchor="middle" fill="#334155">usuarios, notas</text>
+
+  <line x1="220" y1="195" x2="318" y2="195" stroke="#475569" stroke-width="2" marker-end="url(#seta)" marker-start="url(#seta)"/>
+  <text x="270" y="185" text-anchor="middle" fill="#475569">HTTP + JWT</text>
+  <line x1="652" y1="195" x2="758" y2="195" stroke="#475569" stroke-width="2" marker-end="url(#seta)" marker-start="url(#seta)"/>
+  <text x="705" y="185" text-anchor="middle" fill="#475569">SQL</text>
+
+  <!-- Legenda da superficie de ataque -->
+  <g font-size="13">
+    <text x="45" y="280" font-weight="700" fill="#b91c1c">Superfície de ataque</text>
+    <text x="45" y="300">1  JWT e autenticação</text>
+    <text x="45" y="318">2  Autorização (IDOR e papel)</text>
+    <text x="45" y="336">3  Injeção de SQL</text>
+    <text x="45" y="354">4  Mass assignment</text>
+    <text x="45" y="372">5  Senhas e força bruta</text>
+    <text x="680" y="300">6  Segredos e dependências</text>
+    <text x="680" y="318">    (no repositório: .env, requirements.txt)</text>
+    <text x="680" y="336">7  CORS e cabeçalhos de segurança</text>
+  </g>
+
+  <!-- Pipeline -->
+  <text x="40" y="425" font-weight="700" fill="#334155">Pipeline no GitHub Actions — roda a cada push nas branches main e vulneravel</text>
+  <g font-size="13" text-anchor="middle">
+    <rect x="30" y="470" width="120" height="80" rx="8" fill="#f1f5f9" stroke="#475569"/>
+    <text x="90" y="505" font-weight="700">git push</text>
+    <text x="90" y="525">main / vulneravel</text>
+
+    <rect x="185" y="442" width="650" height="136" rx="10" fill="none" stroke="#94a3b8" stroke-dasharray="6 5"/>
+    <text x="510" y="460" fill="#475569">jobs em paralelo — qualquer achado reprova</text>
+
+    <rect x="198" y="472" width="150" height="92" rx="8" fill="#ede9fe" stroke="#7c3aed"/>
+    <text x="273" y="498" font-weight="700">SAST</text>
+    <text x="273" y="518">Bandit, Semgrep</text>
+    <text x="273" y="540" fill="#6d28d9">caixa-branca</text>
+
+    <rect x="358" y="472" width="150" height="92" rx="8" fill="#ede9fe" stroke="#7c3aed"/>
+    <text x="433" y="498" font-weight="700">SCA + Segredos</text>
+    <text x="433" y="518">pip-audit, Gitleaks</text>
+    <text x="433" y="540" fill="#6d28d9">repositório (6)</text>
+
+    <rect x="518" y="472" width="150" height="92" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="593" y="498" font-weight="700">Testes de abuso</text>
+    <text x="593" y="518">pytest + PyJWT</text>
+    <text x="593" y="540" fill="#15803d">caixa-cinza (1–5, 7)</text>
+
+    <rect x="678" y="472" width="150" height="92" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="753" y="498" font-weight="700">DAST</text>
+    <text x="753" y="518">OWASP ZAP API scan</text>
+    <text x="753" y="540" fill="#b91c1c">caixa-preta (3, 7)</text>
+
+    <rect x="870" y="470" width="110" height="80" rx="8" fill="#f1f5f9" stroke="#475569"/>
+    <text x="925" y="505" font-weight="700">Resumo</text>
+    <text x="925" y="525">e relatórios</text>
+  </g>
+  <g stroke="#475569" stroke-width="2" marker-end="url(#seta)">
+    <line x1="150" y1="510" x2="183" y2="510"/>
+    <line x1="835" y1="510" x2="868" y2="510"/>
+  </g>
+  <text x="40" y="606" font-size="13" fill="#475569">Branch vulneravel: falhas propositais (pipeline reprova)  ·  Branch main: versão corrigida (pipeline aprova; os testes viram regressão)</text>
+  <text x="40" y="628" font-size="12" fill="#64748b">Fonte: elaborado pelos autores (2026).</text>
+</svg>

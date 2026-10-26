@@ -1,0 +1,166 @@
+name: Testes de Seguranca
+
+# Roda a cada push nas duas branches (main = corrigida, vulneravel = com falhas propositais)
+# e tambem pode ser disparada manualmente na aba Actions.
+on:
+  push:
+    branches: [main, vulneravel]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# O codigo da NotasAPI fica na pasta notasapi/ do repositorio.
+defaults:
+  run:
+    shell: bash
+    working-directory: notasapi
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  sast:
+    name: SAST (Bandit + Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install bandit semgrep
+      - name: Bandit - padroes inseguros no codigo Python
+        run: |
+          bandit -r app -f html -o bandit-relatorio.html --exit-zero
+          # -ll: falha a pipeline com achados de severidade media ou alta
+          bandit -r app -ll
+      - name: Semgrep - regras de seguranca para Python e JWT
+        if: always()
+        run: semgrep scan --config p/python --config p/jwt --error --metrics=off --json-output=semgrep-relatorio.json app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorios-sast
+          path: |
+            notasapi/bandit-relatorio.html
+            notasapi/semgrep-relatorio.json
+
+  sca:
+    name: SCA (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install pip-audit
+      - name: pip-audit - dependencias com CVE conhecida
+        run: pip-audit -r requirements.txt --desc | tee pip-audit-relatorio.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-sca
+          path: notasapi/pip-audit-relatorio.txt
+
+  segredos:
+    name: Segredos (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # historico completo: segredo apagado em commit antigo continua vazado
+      - name: Instalar Gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar -xz gitleaks
+      - name: Gitleaks - segredos no historico da branch
+        run: ./gitleaks git --log-opts="HEAD" --redact -v --report-format json --report-path gitleaks-relatorio.json .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-segredos
+          path: notasapi/gitleaks-relatorio.json
+
+  testes:
+    name: Testes de seguranca (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: pytest - casos de abuso CT01 a CT11, CT15 e CT16
+        run: pytest --junitxml=pytest-relatorio.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-pytest
+          path: notasapi/pytest-relatorio.xml
+
+  dast:
+    name: DAST (OWASP ZAP API scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - name: Subir a NotasAPI no ambiente isolado do runner
+        run: |
+          export JWT_SECRET="$(openssl rand -hex 32)"
+          export EXPOR_DOCS=true
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-server-header > api.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8000/openapi.json > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:8000/openapi.json > /dev/null
+      - name: Obter token de um aluno para o ZAP testar as rotas autenticadas
+        run: |
+          TOKEN=$(curl -s -X POST http://127.0.0.1:8000/auth/login -H 'Content-Type: application/json' \
+            -d '{"email":"ana@escola.br","senha":"AnaAluna@2026"}' | python -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')
+          echo "::add-mask::$TOKEN"
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - name: OWASP ZAP - API scan a partir do /openapi.json
+        run: |
+          mkdir -p zap && cp .zap/rules.tsv zap/ && chmod -R 777 zap
+          # -I: avisos (WARN) nao quebram a pipeline; somente regras marcadas como FAIL em rules.tsv
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" \
+            -e ZAP_AUTH_HEADER_VALUE="Bearer $TOKEN" \
+            ghcr.io/zaproxy/zaproxy:stable zap-api-scan.py \
+            -t http://127.0.0.1:8000/openapi.json -f openapi \
+            -c rules.tsv -I \
+            -r zap-relatorio.html -J zap-relatorio.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relatorio-dast
+          path: |
+            notasapi/zap/zap-relatorio.html
+            notasapi/zap/zap-relatorio.json
+            notasapi/api.log
+
+  resumo:
+    name: Resumo
+    if: always()
+    needs: [sast, sca, segredos, testes, dast]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Quadro de resultados
+        run: |
+          icone() { [ "$1" = "success" ] && echo "✅ passou" || echo "❌ $1"; }
+          {
+            echo "## Testes de seguranca - branch \`${GITHUB_REF_NAME}\`"
+            echo
+            echo "| Camada | Ferramenta | Casos de teste | Resultado |"
+            echo "|---|---|---|---|"
+            echo "| SAST | Bandit + Semgrep | CT08, CT10, CT14 | $(icone '${{ needs.sast.result }}') |"
+            echo "| SCA | pip-audit | CT13 | $(icone '${{ needs.sca.result }}') |"
+            echo "| Segredos | Gitleaks | CT12 | $(icone '${{ needs.segredos.result }}') |"
+            echo "| Testes automatizados | pytest + PyJWT | CT01 a CT11, CT15, CT16 | $(icone '${{ needs.testes.result }}') |"
+            echo "| DAST | OWASP ZAP | CT08, CT11, CT15, CT16 | $(icone '${{ needs.dast.result }}') |"
+            echo
+            echo "Relatorios completos: secao *Artifacts* desta execucao."
+          } >> "$GITHUB_STEP_SUMMARY"
